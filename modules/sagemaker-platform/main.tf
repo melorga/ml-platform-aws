@@ -326,7 +326,7 @@ resource "aws_lambda_function" "model_monitor_processor" {
   function_name = "${var.project_name}-model-monitor-processor"
   role          = aws_iam_role.lambda_execution[0].arn
   handler       = "index.handler"
-  runtime       = "python3.12"
+  runtime       = "python3.13"
   timeout       = 300
 
   source_code_hash = data.archive_file.model_monitor_lambda[0].output_base64sha256

@@ -1,314 +1,117 @@
-# 🤖 MLOps Platform on AWS
+# ml-platform-aws
 
-[![MLOps](https://img.shields.io/badge/MLOps-Platform-blue?style=for-the-badge&logo=amazon-aws)](https://github.com/melorga/ml-platform-aws)
-[![Terraform](https://img.shields.io/badge/Terraform-1.8+-purple?style=for-the-badge&logo=terraform)](https://terraform.io)
-[![SageMaker](https://img.shields.io/badge/Amazon-SageMaker-orange?style=for-the-badge&logo=amazon-aws)](https://aws.amazon.com/sagemaker/)
-[![EKS](https://img.shields.io/badge/Amazon-EKS-orange?style=for-the-badge&logo=kubernetes)](https://aws.amazon.com/eks/)
+> **Status: experimental, single-module reference implementation.**
+> This repository ships one Terraform module. It is a portfolio / reference
+> example, not a production-ready platform. Treat it as a starting point.
 
-A comprehensive, enterprise-grade MLOps platform built on AWS services that demonstrates end-to-end machine learning lifecycle management with automated training, validation, deployment, and monitoring.
+A Terraform module that provisions a small SageMaker footprint on AWS:
 
-## 🏗️ Architecture Overview
+- **SageMaker Studio Domain** (IAM auth) with configurable user profiles
+- **Model Registry** (Model Package Groups)
+- **S3 buckets** for SageMaker artifacts, Feature Store offline storage, and
+  Model Monitor output (KMS-encrypted, versioned, public access blocked)
+- **KMS key** dedicated to the platform, scoped to the SageMaker service
+- **CloudWatch Log Groups** for training / endpoint / processing jobs
+- **EventBridge -> Lambda -> SNS** pipeline that forwards SageMaker Model
+  Monitor execution status changes as alerts
+- **IAM roles** for SageMaker execution, Feature Store, Step Functions, and
+  SageMaker Pipelines, written as least-privilege inline policies (no
+  `AmazonSageMakerFullAccess` attachment)
 
-```mermaid
-graph TB
-    subgraph "Data Layer"
-        S3[(S3 Data Lake)]
-        FS[SageMaker Feature Store]
-        RDS[(RDS Metadata)]
-    end
-    
-    subgraph "ML Development"
-        SM[SageMaker Studio]
-        NB[Notebooks]
-        EXP[Experiments]
-    end
-    
-    subgraph "ML Pipeline"
-        SF[Step Functions]
-        SP[SageMaker Pipelines]
-        MR[Model Registry]
-    end
-    
-    subgraph "Model Serving"
-        EP[SageMaker Endpoints]
-        EKS[EKS Cluster]
-        ALB[Application Load Balancer]
-    end
-    
-    subgraph "Monitoring & Ops"
-        CW[CloudWatch]
-        MM[Model Monitor]
-        XR[X-Ray Tracing]
-    end
-    
-    S3 --> FS
-    FS --> SM
-    SM --> SP
-    SP --> MR
-    MR --> EP
-    MR --> EKS
-    EP --> MM
-    EKS --> ALB
-    MM --> CW
-    SF --> SP
-    EXP --> RDS
-```
-
-## 🔄 ML Lifecycle Management
-
-```mermaid
-flowchart LR
-    A[Data Ingestion] --> B[Feature Engineering]
-    B --> C[Model Training]
-    C --> D[Model Validation]
-    D --> E{Quality Gate}
-    E -->|Pass| F[Model Registration]
-    E -->|Fail| G[Retrain]
-    G --> C
-    F --> H[Staging Deployment]
-    H --> I[A/B Testing]
-    I --> J{Performance OK?}
-    J -->|Yes| K[Production Deployment]
-    J -->|No| L[Rollback]
-    K --> M[Monitoring]
-    M --> N{Drift Detected?}
-    N -->|Yes| O[Alert]
-    N -->|No| M
-    O --> P[Auto Retrain]
-    P --> C
-```
-
-## 🎯 Key Features
-
-### 🔧 **Infrastructure as Code**
-- Complete Terraform modules for all AWS ML services
-- Multi-environment support (dev/stage/prod)
-- Automated resource provisioning and scaling
-
-### 🤖 **Automated ML Pipelines**
-- SageMaker Pipelines for training workflows
-- Step Functions for complex orchestration
-- EventBridge-triggered automated retraining
-
-### 📊 **Model Management**
-- Centralized model registry with versioning
-- A/B testing infrastructure
-- Blue/green deployment strategies
-
-### 📈 **Monitoring & Observability**
-- Real-time model performance monitoring
-- Data drift detection and alerting
-- Comprehensive logging and tracing
-
-### 🔒 **Security & Compliance**
-- IAM roles with principle of least privilege
-- VPC isolation and network security
-- Encryption at rest and in transit
-
-## 📁 Repository Structure
+## Repository layout
 
 ```
 ml-platform-aws/
-├── modules/
-│   ├── sagemaker-platform/     # Core SageMaker infrastructure
-│   ├── ml-pipelines/           # Training and inference pipelines
-│   └── model-serving/          # Model deployment infrastructure
-├── infrastructure/
-│   ├── environments/
-│   │   ├── dev/               # Development environment
-│   │   ├── stage/             # Staging environment
-│   │   └── prod/              # Production environment
-│   └── shared/                # Shared resources
-├── examples/
-│   ├── end-to-end-ml-pipeline/ # Complete ML workflow example
-│   └── model-deployment/       # Model serving examples
-├── docs/
-│   ├── architecture/          # Architecture documentation
-│   └── tutorials/             # Step-by-step guides
-├── scripts/                   # Utility scripts
-└── tests/                     # Infrastructure tests
+  modules/
+    sagemaker-platform/   # the module
+      main.tf
+      iam.tf
+      variables.tf
+      outputs.tf
+      versions.tf
+  examples/
+    basic/                # minimal usage example
+  .github/
+    workflows/terraform.yml
+    dependabot.yml
 ```
 
-## 🚀 Quick Start
+There are no other modules, environments, pipelines, EKS clusters, or test
+suites in this repo. The previous README claimed those existed; it was
+aspirational and has been removed.
 
-### Prerequisites
-- AWS CLI configured with appropriate permissions
-- Terraform >= 1.8.0
-- Docker (for local testing)
-- Python 3.9+ (for Lambda functions)
+## Requirements
 
-### 1. Deploy Core Infrastructure
+| Tool          | Version  |
+|---------------|----------|
+| Terraform     | >= 1.9.0 |
+| AWS provider  | ~> 6.0   |
 
-```bash
-# Clone the repository
-git clone https://github.com/melorga/ml-platform-aws.git
-cd ml-platform-aws
+You will need an AWS account, a VPC with at least two private subnets, and
+credentials with permission to create SageMaker, IAM, S3, KMS, CloudWatch,
+EventBridge, Lambda, and SNS resources.
 
-# Deploy to development environment
-cd infrastructure/environments/dev
-terraform init
-terraform plan
-terraform apply
+## Usage
+
+```hcl
+module "sagemaker_platform" {
+  source = "github.com/melorga/ml-platform-aws//modules/sagemaker-platform"
+
+  project_name = "ml-demo"
+  domain_name  = "ml-demo-studio"
+  environment  = "dev"
+
+  vpc_id     = "vpc-0123456789abcdef0"
+  subnet_ids = ["subnet-aaa", "subnet-bbb"]
+
+  user_profiles        = ["data-scientist", "ml-engineer"]
+  model_package_groups = ["classification-models"]
+
+  tags = {
+    Project = "ml-demo"
+    Owner   = "platform"
+  }
+}
 ```
 
-### 2. Run Example ML Pipeline
+A runnable example is in [`examples/basic/`](./examples/basic/).
 
-```bash
-# Deploy example pipeline
-cd examples/end-to-end-ml-pipeline
-terraform init
-terraform apply
+## Inputs
 
-# Execute training pipeline
-aws stepfunctions start-execution \
-  --state-machine-arn $(terraform output pipeline_arn) \
-  --input '{}'
-```
+See [`modules/sagemaker-platform/variables.tf`](./modules/sagemaker-platform/variables.tf)
+for the full input schema and validation rules. Notable defaults:
 
-### 3. Monitor Pipeline Execution
+- `default_instance_type = "ml.t3.medium"` (validated against a list that
+  includes m5/m6i, c5/c6i, Graviton m7g/c7g, and g5 families)
+- `log_retention_days = 30`
+- `enable_model_monitoring = true`
 
-```bash
-# View pipeline status
-aws stepfunctions describe-execution \
-  --execution-arn <execution-arn>
+## Outputs
 
-# Check model registry
-aws sagemaker list-model-packages \
-  --model-package-group-name demo-model-group
-```
+See [`modules/sagemaker-platform/outputs.tf`](./modules/sagemaker-platform/outputs.tf).
+Includes Studio domain ID/ARN/URL, bucket names/ARNs, KMS key ID/ARN, IAM
+role ARNs, log group names, SNS topic ARN, and a flattened `sagemaker_config`
+object for chaining into downstream modules.
 
-## 🛠️ Infrastructure Modules
+## CI
 
-### SageMaker Platform Module
+A GitHub Actions workflow runs on every PR and push to `main`:
 
-**Location**: `modules/sagemaker-platform/`
+- `terraform fmt -check -recursive`
+- `terraform validate` against `examples/basic`
+- [`tflint`](https://github.com/terraform-linters/tflint) recursive
+- [`trivy config`](https://github.com/aquasecurity/trivy-action) with SARIF
+  upload to GitHub Security
 
-**Components**:
-- SageMaker Studio Domain with user profiles
-- Feature Store for feature management
-- Model Registry for model versioning
-- Processing and training job configurations
+## Caveats
 
-### ML Pipelines Module
+- The module assumes the VPC and private subnets already exist.
+- The Lambda alert handler is intentionally a placeholder; it publishes a
+  formatted message to SNS but does no triage.
+- `aws_sagemaker_domain` can take 5-10 minutes to create or destroy.
+- This is a reference implementation. Review the IAM policies and KMS
+  resource policy against your own threat model before using in production.
 
-**Location**: `modules/ml-pipelines/`
+## License
 
-**Components**:
-- Step Functions state machines
-- SageMaker Pipeline definitions
-- EventBridge rules for automation
-- Lambda functions for orchestration
-
-### Model Serving Module
-
-**Location**: `modules/model-serving/`
-
-**Components**:
-- SageMaker real-time endpoints
-- EKS cluster for batch inference
-- Auto-scaling configurations
-- Load balancers and networking
-
-## 📊 Cost Optimization
-
-### Estimated Monthly Costs (USD)
-
-| Component | Dev | Stage | Prod |
-|-----------|-----|-------|------|
-| SageMaker Studio | $50 | $100 | $200 |
-| Training Jobs | $100 | $300 | $800 |
-| Endpoints | $200 | $500 | $1,500 |
-| EKS Cluster | $150 | $300 | $600 |
-| Storage (S3/EFS) | $20 | $50 | $150 |
-| **Total** | **$520** | **$1,250** | **$3,250** |
-
-### Cost Optimization Features
-- Spot instances for training jobs
-- Auto-scaling for endpoints
-- Lifecycle policies for data storage
-- Scheduled shutdown for development resources
-
-## 🔐 Security Features
-
-- **Identity & Access Management**
-  - Fine-grained IAM roles and policies
-  - Resource-based permissions
-  - Cross-account access controls
-
-- **Network Security**
-  - VPC isolation with private subnets
-  - Security groups and NACLs
-  - VPC endpoints for AWS services
-
-- **Data Protection**
-  - Encryption at rest (S3, EBS, RDS)
-  - Encryption in transit (TLS/SSL)
-  - Key management with AWS KMS
-
-- **Compliance**
-  - CloudTrail logging
-  - Config rules for compliance monitoring
-  - GuardDuty for threat detection
-
-## 📈 Performance Metrics
-
-### Training Performance
-- **Model Training Time**: 15-45 minutes (depending on data size)
-- **Pipeline Execution Time**: 2-8 hours (end-to-end)
-- **Resource Utilization**: 85-95% (optimized instance types)
-
-### Inference Performance
-- **Real-time Latency**: <100ms (P99)
-- **Batch Throughput**: 10K+ predictions/minute
-- **Availability**: 99.9% SLA
-
-## 🧪 Testing
-
-```bash
-# Run infrastructure tests
-cd tests
-go test -v ./...
-
-# Run integration tests
-python -m pytest tests/integration/
-
-# Performance testing
-cd scripts
-./load_test.sh
-```
-
-## 📚 Documentation
-
-- [Architecture Deep Dive](docs/architecture/README.md)
-- [Deployment Guide](docs/tutorials/deployment.md)
-- [ML Pipeline Tutorial](docs/tutorials/ml-pipeline.md)
-- [Monitoring Guide](docs/tutorials/monitoring.md)
-- [Troubleshooting](docs/tutorials/troubleshooting.md)
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests for new functionality
-5. Run the test suite
-6. Submit a pull request
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🏆 Portfolio Impact
-
-This MLOps platform demonstrates:
-
-✅ **Enterprise-grade ML infrastructure** design and implementation  
-✅ **Advanced AWS services integration** (SageMaker, EKS, Step Functions)  
-✅ **Infrastructure as Code** best practices with Terraform  
-✅ **MLOps pipeline automation** with CI/CD integration  
-✅ **Cost optimization** and performance engineering  
-✅ **Security and compliance** in ML workloads  
-
----
-
-**Built with ❤️ by [melorga](https://github.com/melorga) as part of an advanced AWS Solutions Architect portfolio**
+MIT - see [LICENSE](./LICENSE).

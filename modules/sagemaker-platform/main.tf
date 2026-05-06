@@ -1,15 +1,6 @@
 # SageMaker Platform Module
-# This module creates a comprehensive SageMaker infrastructure for MLOps
-
-terraform {
-  required_version = ">= 1.8.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
+# Provisions SageMaker Studio, Model Registry, Feature Store buckets, KMS, and
+# an EventBridge -> Lambda alerting pipeline for Model Monitor events.
 
 # Data source for current AWS account and region
 data "aws_caller_identity" "current" {}
@@ -41,21 +32,21 @@ resource "aws_sagemaker_domain" "studio" {
 
   default_user_settings {
     execution_role = aws_iam_role.sagemaker_execution.arn
-    
+
     jupyter_server_app_settings {
       default_resource_spec {
         instance_type       = var.default_instance_type
         sagemaker_image_arn = var.sagemaker_image_arn
       }
     }
-    
+
     kernel_gateway_app_settings {
       default_resource_spec {
         instance_type       = var.default_instance_type
         sagemaker_image_arn = var.sagemaker_image_arn
       }
     }
-    
+
     tensor_board_app_settings {
       default_resource_spec {
         instance_type = "ml.t3.medium"
@@ -70,13 +61,13 @@ resource "aws_sagemaker_domain" "studio" {
 
   default_space_settings {
     execution_role = aws_iam_role.sagemaker_execution.arn
-    
+
     jupyter_server_app_settings {
       default_resource_spec {
         instance_type = var.default_instance_type
       }
     }
-    
+
     kernel_gateway_app_settings {
       default_resource_spec {
         instance_type = var.default_instance_type
@@ -91,13 +82,13 @@ resource "aws_sagemaker_domain" "studio" {
 
 # SageMaker User Profiles
 resource "aws_sagemaker_user_profile" "users" {
-  for_each    = toset(var.user_profiles)
-  domain_id   = aws_sagemaker_domain.studio.id
+  for_each          = toset(var.user_profiles)
+  domain_id         = aws_sagemaker_domain.studio.id
   user_profile_name = each.value
 
   user_settings {
     execution_role = aws_iam_role.sagemaker_execution.arn
-    
+
     jupyter_server_app_settings {
       default_resource_spec {
         instance_type = var.default_instance_type
@@ -147,6 +138,9 @@ resource "aws_s3_bucket_public_access_block" "sagemaker_bucket_pab" {
 }
 
 # KMS Key for SageMaker encryption
+# Root account retains kms:* (standard pattern, prevents key lockout).
+# SageMaker service grant is scoped via kms:ViaService so the key can only be
+# used through the SageMaker control plane, not from arbitrary callers.
 resource "aws_kms_key" "sagemaker_key" {
   description             = "KMS key for SageMaker encryption"
   deletion_window_in_days = 7
@@ -156,7 +150,7 @@ resource "aws_kms_key" "sagemaker_key" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid    = "Enable IAM User Permissions"
+        Sid    = "EnableRootAccountAdmin"
         Effect = "Allow"
         Principal = {
           AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
@@ -165,7 +159,7 @@ resource "aws_kms_key" "sagemaker_key" {
         Resource = "*"
       },
       {
-        Sid    = "Allow SageMaker Service"
+        Sid    = "AllowSageMakerServiceScoped"
         Effect = "Allow"
         Principal = {
           Service = "sagemaker.amazonaws.com"
@@ -178,6 +172,11 @@ resource "aws_kms_key" "sagemaker_key" {
           "kms:DescribeKey"
         ]
         Resource = "*"
+        Condition = {
+          StringLike = {
+            "kms:ViaService" = "sagemaker.*.amazonaws.com"
+          }
+        }
       }
     ]
   })
@@ -194,8 +193,8 @@ resource "aws_kms_alias" "sagemaker_key_alias" {
 
 # Model Registry (Model Package Groups)
 resource "aws_sagemaker_model_package_group" "model_groups" {
-  for_each                    = toset(var.model_package_groups)
-  model_package_group_name    = each.value
+  for_each                        = toset(var.model_package_groups)
+  model_package_group_name        = each.value
   model_package_group_description = "Model package group for ${each.value} models"
 
   tags = merge(var.tags, {
@@ -306,16 +305,29 @@ resource "aws_sns_topic" "model_monitor_alerts" {
   })
 }
 
+# Lambda log group with explicit retention (avoids implicit infinite retention)
+resource "aws_cloudwatch_log_group" "model_monitor_lambda" {
+  count = var.enable_model_monitoring ? 1 : 0
+
+  name              = "/aws/lambda/${var.project_name}-model-monitor-processor"
+  retention_in_days = var.log_retention_days
+  kms_key_id        = aws_kms_key.sagemaker_key.arn
+
+  tags = merge(var.tags, {
+    Name = "${var.project_name}-model-monitor-lambda-logs"
+  })
+}
+
 # Lambda function for processing model monitor alerts (placeholder)
 resource "aws_lambda_function" "model_monitor_processor" {
   count = var.enable_model_monitoring ? 1 : 0
-  
-  filename         = "model_monitor_lambda.zip"
-  function_name    = "${var.project_name}-model-monitor-processor"
-  role            = aws_iam_role.lambda_execution[0].arn
-  handler         = "index.handler"
-  runtime         = "python3.9"
-  timeout         = 300
+
+  filename      = "model_monitor_lambda.zip"
+  function_name = "${var.project_name}-model-monitor-processor"
+  role          = aws_iam_role.lambda_execution[0].arn
+  handler       = "index.handler"
+  runtime       = "python3.13"
+  timeout       = 300
 
   source_code_hash = data.archive_file.model_monitor_lambda[0].output_base64sha256
 
@@ -326,6 +338,8 @@ resource "aws_lambda_function" "model_monitor_processor" {
     }
   }
 
+  depends_on = [aws_cloudwatch_log_group.model_monitor_lambda]
+
   tags = merge(var.tags, {
     Name = "${var.project_name}-model-monitor-processor"
   })
@@ -334,12 +348,12 @@ resource "aws_lambda_function" "model_monitor_processor" {
 # Lambda deployment package
 data "archive_file" "model_monitor_lambda" {
   count = var.enable_model_monitoring ? 1 : 0
-  
+
   type        = "zip"
   output_path = "model_monitor_lambda.zip"
-  
+
   source {
-    content = <<EOF
+    content  = <<EOF
 import json
 import boto3
 import os
@@ -356,35 +370,32 @@ def handler(event, context):
     """
     try:
         logger.info(f"Received event: {json.dumps(event)}")
-        
-        # Extract monitoring execution details
+
         detail = event.get('detail', {})
         execution_status = detail.get('MonitoringExecutionStatus')
         execution_arn = detail.get('MonitoringExecutionArn')
-        
-        # Create alert message
+
         message = f"""
         SageMaker Model Monitor Alert
-        
+
         Status: {execution_status}
         Execution ARN: {execution_arn}
         Time: {event.get('time')}
-        
+
         Please check the SageMaker console for detailed results.
         """
-        
-        # Send SNS notification
+
         sns.publish(
             TopicArn=os.environ['SNS_TOPIC_ARN'],
             Subject=f"Model Monitor Alert - {execution_status}",
             Message=message
         )
-        
+
         return {
             'statusCode': 200,
             'body': json.dumps('Alert processed successfully')
         }
-        
+
     except Exception as e:
         logger.error(f"Error processing alert: {str(e)}")
         return {
@@ -399,7 +410,7 @@ EOF
 # EventBridge Target for Lambda
 resource "aws_cloudwatch_event_target" "model_monitor_lambda_target" {
   count = var.enable_model_monitoring ? 1 : 0
-  
+
   rule      = aws_cloudwatch_event_rule.model_monitor_rule.name
   target_id = "ModelMonitorLambdaTarget"
   arn       = aws_lambda_function.model_monitor_processor[0].arn
@@ -408,7 +419,7 @@ resource "aws_cloudwatch_event_target" "model_monitor_lambda_target" {
 # Lambda permission for EventBridge
 resource "aws_lambda_permission" "allow_eventbridge" {
   count = var.enable_model_monitoring ? 1 : 0
-  
+
   statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.model_monitor_processor[0].function_name

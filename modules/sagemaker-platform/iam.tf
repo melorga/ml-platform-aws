@@ -1,4 +1,10 @@
 # IAM Roles and Policies for SageMaker Platform
+#
+# Note: We deliberately do NOT attach the AWS-managed AmazonSageMakerFullAccess
+# policy. That policy is broad (s3:*, ecr:*, iam:PassRole on *, etc.) and is
+# not appropriate for production. The inline policy below is the least-privilege
+# replacement and only grants access to the buckets, KMS key, log groups, ECR
+# repositories, and SNS topic provisioned by this module.
 
 # SageMaker Execution Role
 resource "aws_iam_role" "sagemaker_execution" {
@@ -22,13 +28,8 @@ resource "aws_iam_role" "sagemaker_execution" {
   })
 }
 
-# Attach AWS managed policy for SageMaker execution
-resource "aws_iam_role_policy_attachment" "sagemaker_execution_policy" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
-  role       = aws_iam_role.sagemaker_execution.name
-}
-
-# Custom policy for SageMaker execution with specific permissions
+# Custom least-privilege policy for SageMaker execution.
+# Replaces AmazonSageMakerFullAccess; resources are scoped to module-owned ARNs.
 resource "aws_iam_role_policy" "sagemaker_execution_custom" {
   name = "${var.project_name}-sagemaker-execution-custom"
   role = aws_iam_role.sagemaker_execution.id
@@ -82,14 +83,20 @@ resource "aws_iam_role_policy" "sagemaker_execution_custom" {
         ]
       },
       {
+        # ecr:GetAuthorizationToken cannot be resource-scoped (ECR API quirk),
+        # everything else is scoped to repositories in this account.
+        Effect   = "Allow"
+        Action   = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
         Effect = "Allow"
         Action = [
-          "ecr:GetAuthorizationToken",
           "ecr:BatchCheckLayerAvailability",
           "ecr:GetDownloadUrlForLayer",
           "ecr:BatchGetImage"
         ]
-        Resource = "*"
+        Resource = "arn:aws:ecr:*:${data.aws_caller_identity.current.account_id}:repository/*"
       },
       {
         Effect = "Allow"

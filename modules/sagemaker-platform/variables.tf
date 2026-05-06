@@ -13,10 +13,9 @@ variable "project_name" {
 variable "domain_name" {
   description = "Name for the SageMaker Studio Domain"
   type        = string
-  default     = ""
 
   validation {
-    condition     = var.domain_name == "" || can(regex("^[a-zA-Z][a-zA-Z0-9-]*[a-zA-Z0-9]$", var.domain_name))
+    condition     = can(regex("^[a-zA-Z][a-zA-Z0-9-]*[a-zA-Z0-9]$", var.domain_name))
     error_message = "Domain name must start with a letter, contain only alphanumeric characters and hyphens, and end with an alphanumeric character."
   }
 }

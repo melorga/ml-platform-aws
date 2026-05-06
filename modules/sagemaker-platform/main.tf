@@ -6,23 +6,6 @@
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
-# VPC and networking (if not provided)
-data "aws_vpc" "existing" {
-  count = var.vpc_id != "" ? 1 : 0
-  id    = var.vpc_id
-}
-
-data "aws_subnets" "private" {
-  count = var.vpc_id != "" ? 1 : 0
-  filter {
-    name   = "vpc-id"
-    values = [var.vpc_id]
-  }
-  tags = {
-    Type = "private"
-  }
-}
-
 # SageMaker Studio Domain
 resource "aws_sagemaker_domain" "studio" {
   domain_name = var.domain_name
@@ -55,7 +38,7 @@ resource "aws_sagemaker_domain" "studio" {
 
     sharing_settings {
       notebook_output_option = "Allowed"
-      s3_output_location     = "s3://${aws_s3_bucket.sagemaker_bucket.bucket}/studio-outputs/"
+      s3_output_path         = "s3://${aws_s3_bucket.sagemaker_bucket.bucket}/studio-outputs/"
     }
   }
 
@@ -103,7 +86,7 @@ resource "aws_sagemaker_user_profile" "users" {
 
 # S3 Bucket for SageMaker artifacts
 resource "aws_s3_bucket" "sagemaker_bucket" {
-  bucket = "${var.project_name}-sagemaker-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.name}"
+  bucket = "${var.project_name}-sagemaker-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-sagemaker-bucket"
@@ -205,7 +188,7 @@ resource "aws_sagemaker_model_package_group" "model_groups" {
 # Feature Store (Feature Groups require additional setup via SDK/API)
 # We'll create the necessary IAM roles and S3 buckets for Feature Store
 resource "aws_s3_bucket" "feature_store_bucket" {
-  bucket = "${var.project_name}-feature-store-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.name}"
+  bucket = "${var.project_name}-feature-store-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-feature-store-bucket"
@@ -260,7 +243,7 @@ resource "aws_cloudwatch_log_group" "sagemaker_processing" {
 
 # Model Monitor Resources
 resource "aws_s3_bucket" "model_monitor_bucket" {
-  bucket = "${var.project_name}-model-monitor-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.name}"
+  bucket = "${var.project_name}-model-monitor-${data.aws_caller_identity.current.account_id}-${data.aws_region.current.region}"
 
   tags = merge(var.tags, {
     Name = "${var.project_name}-model-monitor-bucket"

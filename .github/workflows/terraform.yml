@@ -70,7 +70,12 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: tflint --recursive
+        # TFLINT_CONFIG_FILE so the root .tflint.hcl is also applied to
+        # subdirectories visited by --recursive (otherwise each dir needs
+        # its own .tflint.hcl).
         run: tflint --recursive --format compact
+        env:
+          TFLINT_CONFIG_FILE: ${{ github.workspace }}/.tflint.hcl
 
   trivy:
     name: trivy config scan
